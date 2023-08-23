@@ -39,7 +39,7 @@ dataset_test = load_dataset('eugenesiow/'+str(args.test_dataset), 'bicubic_x'+st
 class SuperResolutionTrainDataset(Dataset):
     def __init__(self, dataset):
         self.dataset = dataset
-        self.transform_img = transforms.ToTensor()
+        self.transform = transforms.ToTensor()
         
 
     def __len__(self):
