@@ -20,6 +20,8 @@ from wavemix import Level1Waveblock
 import os
 from torch.utils.tensorboard import SummaryWriter
 import glob
+from losses import VGGPerceptualLoss
+from losses2 import Perceptual_loss134
 
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -264,7 +266,7 @@ writer = SummaryWriter('logs/'+starttime[:13])
 
 scaler = torch.cuda.amp.GradScaler()
 
-batch_size = 1
+batch_size = 8
 
 PATH = str(args.test_dataset)+'_'+str(args.resolution)+'x_y_Div2k_'+str(args.eval_metric)+'.pth'
 
@@ -285,7 +287,8 @@ ssim = StructuralSimilarityIndexMeasure().to(device)
 
 criterion =  nn.HuberLoss()
 criterion1 =  nn.L1Loss() 
-criterion2 =  nn.MSELoss()
+# criterion2 =  nn.MSELoss()
+criterion3 = Perceptual_loss134()#VGGPerceptualLoss() 
 
 scaler = torch.cuda.amp.GradScaler()
 toppsnr = []
@@ -313,32 +316,45 @@ while counter < 25:
             optimizer.zero_grad()
             outputs = model(inputs)
             outputs_img = outputs
-            outputs = outputs[:, 0:1, :, :]
-            labels = labels[:, 0:1, :, :]
+            label = labels
+            
 
 
-            epoch_PSNR = psnr(outputs, labels) 
-            epoch_SSIM = structural_similarity_index_measure(outputs, labels)
+            
             
             with torch.cuda.amp.autocast():
-                # loss =  criterion(outputs, labels)
-                loss = 1 - epoch_SSIM
+                Lp = criterion3(outputs, labels)
+                
+                outputs = outputs[:, 0:1, :, :]
+                labels = labels[:, 0:1, :, :]
+                L1 = criterion1(outputs, labels)
+                loss =  (L1 + Lp) / 2 #0.5 * criterion2(outputs, labels) - structural_similarity_index_measure(outputs, labels)
+                # loss = 1 - structural_similarity_index_measure(outputs, labels)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
 
-            
+            epoch_PSNR = psnr(outputs, labels) 
+            epoch_SSIM = structural_similarity_index_measure(outputs, labels)
             
             epoch_loss += loss / len(trainloader)
             tepoch.set_postfix_str(f" loss : {epoch_loss:.4f} - PSNR: {epoch_PSNR:.4f} - SSIM: {epoch_SSIM:.4f}" )
             iter += 1
             writer.add_scalar('train/loss', epoch_loss, iter)
+            writer.add_scalar('train/L1', L1, iter)
+            writer.add_scalar('train/Lp', Lp, iter)
             writer.add_scalar('train/PSNR', epoch_PSNR, iter)
             writer.add_scalar('train/SSIM', epoch_SSIM, iter)
-            if iter%100 == 0:
+            if iter%10 == 0:
                 input = kornia.color.ycbcr_to_rgb(inputs[0])
-                img_grid = make_grid(input)
-                writer.add_image('train/LR', img_grid, iter)
+                label = kornia.color.ycbcr_to_rgb(label[0]) 
+                output = kornia.color.ycbcr_to_rgb(outputs_img[0])
+                img_grid_LR = make_grid(input)
+                img_grid_HR = make_grid(output)
+                img_grid_HR_GT = make_grid(label)
+                writer.add_image('train/LR', img_grid_LR, iter)
+                writer.add_image('train/HR', img_grid_HR, iter)
+                writer.add_image('train/HR_GT', img_grid_HR_GT, iter)
 
     model.eval()
     t1 = time.time()
@@ -397,7 +413,7 @@ while counter < 25:  # loop over the dataset multiple times
           inputs, labels = data[0].to(device), data[1].to(device)
           optimizer.zero_grad()
           outputs = model(inputs)
-          
+          output = outputs
           outputs = outputs[:, 0:1, :, :]
           labels = labels[:, 0:1, :, :]
 
@@ -415,6 +431,14 @@ while counter < 25:  # loop over the dataset multiple times
           writer.add_scaler('train/loss', epoch_loss, iter)
           writer.add_scaler('train/PSNR', epoch_PSNR, iter)
           writer.add_scaler('train/SSIM', epoch_SSIM, iter)
+          if iter%100 == 0:
+                input = kornia.color.ycbcr_to_rgb(inputs[0])
+                output = kornia.color.ycbcr_to_rgb(output)
+                img_grid_LR = make_grid(input)
+                img_grid_HR = make_grid(output)
+                writer.add_image('train/LR', img_grid_LR, iter)
+                writer.add_image('train/HR', img_grid_HR, iter)
+
         
         # writer.add_image('train/LR', outputs[], iter)
     t1 = time.time()
